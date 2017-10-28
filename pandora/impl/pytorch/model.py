@@ -13,7 +13,8 @@ from torch.autograd import Variable
 
 from pandora.impl.base_model import BaseModel
 
-from pandora.impl.pytorch.encoder import RNNEncoder, ConvEncoder
+from pandora.impl.pytorch.encoder import (
+    RNNEncoder, ConvEncoder, BottleEncoder)
 from pandora.impl.pytorch.decoder import AttentionalDecoder, LinearDecoder
 from pandora.impl.pytorch.utils import Optimizer, BatchIterator, Progbar
 from pandora.impl.pytorch import utils
@@ -69,7 +70,7 @@ class PyTorchModel(nn.Module, BaseModel):
         if self.include_token:
             self.joined_dim = self.nb_dense_dims
         if self.include_context:
-            self.joined_dim += (self.nb_dense_dims * self.nb_context_tokens)
+            self.joined_dim += self.nb_dense_dims
         super(PyTorchModel, self).__init__()
 
         # gpu
@@ -146,7 +147,8 @@ class PyTorchModel(nn.Module, BaseModel):
                 in_channels=self.char_embed_dim,
                 out_channels=self.nb_filters,
                 kernel_size=self.filter_length,
-                output_size=self.nb_dense_dims)
+                output_size=self.nb_dense_dims,
+                token_len=self.token_len)
 
         else:
             raise ValueError('Parameter `focus_repr` not understood: ' +
@@ -161,10 +163,9 @@ class PyTorchModel(nn.Module, BaseModel):
             weight = torch.from_numpy(np.array(self.pretrained_embeddings))
             self.context_embeddings.weight.data.copy_(weight)
 
-        # !diff: seq_len doesn't require dense weights
-        self.context_encoder = nn.Linear(
-            self.nb_embedding_dims, self.nb_dense_dims)
-        utils.init_linear(self.context_encoder)
+        self.context_encoder = BottleEncoder(
+            self.nb_embedding_dims, self.nb_dense_dims,
+            seq_len=self.nb_context_tokens, dropout=self.dropout_level)
 
     def _build_lemma_decoder(self):
         if self.include_lemma == 'generate':
@@ -252,9 +253,9 @@ class PyTorchModel(nn.Module, BaseModel):
         token_out, context_out, token_context, joined = None, None, None, []
         if self.include_token:
             # (batch x token_len x emb_dim)
-            token_embed = self.token_embeddings(train_in['focus_in'])
-            token_embed = token_embed.transpose(0, 1)
-            token_out = self.token_encoder(token_embed)
+            token_out = self.token_embeddings(train_in['focus_in'])
+            token_out = token_out.transpose(0, 1)
+            token_out = self.token_encoder(token_out)
             if self.focus_repr == 'recurrent':
                 # if 'recurrent':
                 #     token_out (seq_len x batch x nb_dense_dims)
@@ -266,17 +267,14 @@ class PyTorchModel(nn.Module, BaseModel):
 
         if self.include_context:
             # (batch x seq_len x emb_dim)
-            context_embed = self.context_embeddings(train_in['context_in'])
-            batch, seq_len, emb_dim = context_embed.size()
+            context_out = self.context_embeddings(train_in['context_in'])
             context_out = F.dropout(
-                context_embed, p=self.dropout_level, training=self.training)
+                context_out, p=self.dropout_level, training=self.training)
+            # (batch x emb_dim x seq_len)
+            context_out = context_out.transpose(1, 2)
             context_out = F.relu(context_out)
-            # (batch x seq_len x emb_dim) -> (batch * seq_len x emb_dim)
-            context_out = context_out.view(batch * seq_len, emb_dim)
-            # (batch * seq_len x nb_dense_dims)
+            # (batch x nb_dense_dims)
             context_out = self.context_encoder(context_out)
-            # (batch x seq_len * nb_dense_dims)
-            context_out = context_out.view(batch, -1)
             context_out = F.dropout(
                 context_out, p=self.dropout_level, training=self.training)
             context_out = F.relu(context_out)

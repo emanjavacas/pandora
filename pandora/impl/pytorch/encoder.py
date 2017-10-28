@@ -1,4 +1,6 @@
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -58,67 +60,125 @@ class RNNEncoder(nn.Module):
         return token_out
 
 
+class BottleEncoder(nn.Module):
+    """
+    Implements a linear projection from (seq_len x batch x inp_size) to
+    (batch x output_size) applying one of three different pooling operations.
+    If `flatten`, it applies the linear transformation on the flattend input
+    (seq_len * inp_size) to output_size. Flatten requires a known fixed input
+    length. If `max` it does max pooling over the seq_len dimension prior
+    to the linear transformation. If `rnn`, it runs a bidirection GRU over
+    the seq_len and applies the linear transformation on the concatenated
+    summary vectors of both directions.
+    """
+    def __init__(self, inp_size, output_size, seq_len=None, pooling='flatten',
+                 dropout=0.0):
+        self.pooling = pooling
+        self.dropout = dropout
+        self.inp_size = inp_size
+        super(BottleEncoder, self).__init__()
+
+        if self.pooling == 'flatten':
+            assert seq_len, "Flatten requires knowing the seq_len"
+            # no pooling, do flattening instead
+            self.dense = nn.Linear(seq_len * inp_size, output_size)
+
+        elif self.pooling == 'rnn':
+            assert divmod(inp_size, 2)[1] == 0, \
+                "rnn pooling requires even input size"
+            self.pooling_layer = nn.GRU(
+                inp_size, inp_size // 2, bidirectional=True)
+
+            self.dense = nn.Linear(inp_size, output_size)
+
+        elif self.pooling == 'max':
+            self.dense = nn.Linear(inp_size, output_size)
+
+    def init(self):
+        if self.pooling == 'rnn':
+            # rnn
+            utils.init_rnn(self.pooling_layer)
+
+        # linear
+        utils.init_linear(self.dense)
+
+    def forward(self, inp):
+        """
+        Parameters
+        ===========
+        inp : (batch x inp_size x seq_len)
+
+        Returns
+        ========
+        output : (batch x output_size)
+        """
+        if self.pooling == 'flatten':
+            inp = inp.view(inp.size(0), -1)
+
+        elif self.pooling == 'rnn':
+            # initial hidden
+            batch, num_dirs, hid_size = inp.size(0), 2, self.inp_size // 2
+            hidden = Variable(
+                inp.data.new(num_dirs, batch, hid_size).zero_(),
+                requires_grad=False)
+            # (batch x inp_size x seq_len) -> (seq_len x batch x inp_size)
+            inp = inp.transpose(1, 2).transpose(0, 1).contiguous()
+            # (seq_len x batch x inp_size)
+            inp, _ = self.pooling_layer(inp, hidden)
+            # (batch x inp_size)
+            inp = inp[-1]
+
+        elif self.pooling == 'max':
+            # (batch x inp_size x seq_len) -> (batch x inp_size)
+            inp, _ = inp.max(2)
+
+        inp = F.dropout(inp, p=self.dropout, training=self.training)
+
+        return self.dense(inp)
+
+
+def get_conv_output_length(inp_len, kernel_size,
+                           padding=0, dilation=1, stride=1):
+    """
+    compute length of the convolutional output sequence (l_out)
+    l_out = floor(
+      (l_in + 2 ∗ padding − dilation ∗ (kernel_size − 1) − 1)
+      /
+      stride + 1)
+    """
+    return math.floor(
+        (inp_len + 2 * padding - dilation * (kernel_size - 1) - 1)
+        /
+        stride + 1)
+
+
 class ConvEncoder(nn.Module):
     """CNN Encoder of the focus token at the character level"""
     def __init__(self, in_channels, out_channels, kernel_size, output_size,
-                 pooling='max', dropout=0.0):
+                 token_len, dropout=0.0, pooling='rnn'):
         self.dropout = dropout
         self.pooling = pooling
         self.out_channels = out_channels
         super(ConvEncoder, self).__init__()
 
         self.focus_conv = nn.Conv1d(
-            in_channels=in_channels,   # emb_dim
+            in_channels=in_channels,    # emb_dim
             out_channels=out_channels,  # nb_filters
             kernel_size=kernel_size)
 
-        # !diff: token_len doesn't require dense weights
-        # !diff: use some kind of pooling to abstract over l_out
-        if pooling == 'rnn':
-            assert divmod(output_size, 2)[1] == 0, \
-                "rnn pooling requires even nb_filters"
-            self.pooling_layer = nn.GRU(
-                out_channels, out_channels / 2, bidirectional=True)
+        seq_len = None
+        if pooling == 'flatten':
+            seq_len = get_conv_output_length(token_len, kernel_size)
 
-        self.focus_dense = nn.Linear(out_channels, output_size)
+        self.focus_dense = BottleEncoder(
+            out_channels, output_size, seq_len=seq_len, pooling=pooling,
+            dropout=dropout)
 
         self.init()
 
     def init(self):
         # conv
         utils.init_conv(self.focus_conv)
-        if self.pooling == 'rnn':
-            # rnn
-            utils.init_rnn(self.pooling_layer)
-
-        # linear
-        utils.init_linear(self.focus_dense)
-
-    def pool(self, token_out):
-        """
-        Applies some kind of pooling over the dense output after convolution.
-
-        Parameters
-        ===========
-        token_out : (batch x c_out x l_out)
-
-        Returns
-        ========
-        token_out : (batch x c_out)
-        """
-        if self.pooling == 'rnn':
-            batch = token_out.size(0)
-            hidden_data = token_out.data.new(2, batch, self.out_channels)
-            hidden = Variable(hidden_data, requires_grad=False)
-            # (l_out x batch x c_out)
-            token_out = token_out.transpose(0, 2).contiguous()
-            outs, _ = self.pooling_layer(token_out, hidden)
-            return outs[-1]
-
-        elif self.pooling == 'max':
-            l_out = token_out.size(2)
-            # (batch x c_out x l_out) -> (batch x c_out x 1) -> (batch x c_out)
-            return F.max_pool1d(token_out, l_out).squeeze(2)
 
     def forward(self, token_embed):
         """
@@ -132,16 +192,13 @@ class ConvEncoder(nn.Module):
         """
         # (batch x emb_dim x seq_len)
         token_embed = token_embed.transpose(0, 1).transpose(1, 2)
-        # (batch x c_out x l_out)
+        # (batch x channel_out x conv_seq_len)
         token_out = self.focus_conv(token_embed)
         token_out = F.relu(token_out)
-        token_out = F.dropout(
-            token_out, p=self.dropout, training=self.training)
-        # (batch x c_out)
-        token_out = self.pool(token_out)
         # (batch x output_size)
         token_out = self.focus_dense(token_out)
         token_out = F.dropout(
             token_out, p=self.dropout, training=self.training)
         token_out = F.relu(token_out)
+
         return token_out

@@ -22,9 +22,11 @@ class LinearDecoder(nn.Module):
         encoder in the prediction of the lemma.
     """
 
-    def __init__(self, input_size, output_size, include_context=True):
+    def __init__(self, input_size, output_size, include_context=True,
+                 dropout=0.0):
         self.output_size = output_size
         self.include_context = include_context
+        self.dropout = dropout
         super(LinearDecoder, self).__init__()
 
         self.decoder = nn.Linear(input_size, self.output_size)
@@ -43,7 +45,13 @@ class LinearDecoder(nn.Module):
             linear_in = torch.cat([token_out, context_out], 1)
         else:
             linear_in = token_out
-        return F.log_softmax(self.decoder(linear_in))
+
+        linear_out = self.decoder(linear_in)
+
+        linear_out = F.dropout(
+            linear_out, p=self.dropout, training=self.training)
+
+        return F.log_softmax(linear_out)
 
 
 class Attention(nn.Module):
