@@ -54,7 +54,7 @@ class RNNEncoder(nn.Module):
         token_out = token_out.view(seq_len, -1, 2, self.hidden_size)
         # resp. (batch x 1 x hidden_size)
         left, right = torch.chunk(token_out, chunks=2, dim=2)
-        token_out = (left + right).squeeze()
+        token_out = (left + right).squeeze(1)
         return token_out
 
 
@@ -114,9 +114,11 @@ class ConvEncoder(nn.Module):
             token_out = token_out.transpose(0, 2).contiguous()
             outs, _ = self.pooling_layer(token_out, hidden)
             return outs[-1]
+
         elif self.pooling == 'max':
             l_out = token_out.size(2)
-            return F.max_pool1d(token_out, l_out).squeeze()
+            # (batch x c_out x l_out) -> (batch x c_out x 1) -> (batch x c_out)
+            return F.max_pool1d(token_out, l_out).squeeze(2)
 
     def forward(self, token_embed):
         """
