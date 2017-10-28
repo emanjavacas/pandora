@@ -87,7 +87,7 @@ class ConvEncoder(nn.Module):
     def init(self):
         # conv
         utils.init_conv(self.focus_conv)
-        if self.pooling:
+        if self.pooling == 'rnn':
             # rnn
             utils.init_rnn(self.pooling_layer)
 

@@ -64,8 +64,8 @@ class Attention(nn.Module):
         self.init()
 
     def init(self):
-        utils.linear(self.linear_in)
-        utils.linear(self.linear_out)
+        utils.init_linear(self.linear_in)
+        utils.init_linear(self.linear_out)
 
     def forward(self, dec_out, enc_outs):
         """

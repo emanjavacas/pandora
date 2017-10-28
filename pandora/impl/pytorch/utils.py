@@ -8,6 +8,7 @@ import numpy as np
 
 import torch
 import torch.optim as optim
+import torch.nn as nn
 from torch.nn import init
 from torch.nn.utils import clip_grad_norm
 from torch.autograd import Variable
@@ -23,15 +24,29 @@ def init_linear(linear):
 
 
 def init_rnn(rnn):
-    init.xavier_uniform(rnn.weight_hh)
-    init.xavier_uniform(rnn.weight_ih)
-    init.constant(rnn.bias_hh, 0.)
-    init.constant(rnn.bias_ih, 0.)
+    if isinstance(rnn, (nn.GRUCell, nn.LSTMCell, nn.RNNCell)):
+        init.xavier_uniform(rnn.weight_hh)
+        init.xavier_uniform(rnn.weight_ih)
+        init.constant(rnn.bias_hh, 0.)
+        init.constant(rnn.bias_ih, 0.)
+
+    else:
+        for layer in range(rnn.num_layers):
+            init.xavier_uniform(getattr(rnn, f'weight_hh_l{layer}'))
+            init.xavier_uniform(getattr(rnn, f'weight_ih_l{layer}'))
+            init.constant(getattr(rnn, f'bias_hh_l{layer}'), 0.)
+            init.constant(getattr(rnn, f'bias_ih_l{layer}'), 0.)
 
 
 def init_conv(conv):
     init.xavier_uniform(conv.weight)
     init.constant(conv.bias, 0.)
+
+
+def init_sequential_linear(sequential):
+    for child in sequential.children():
+        if isinstance(child, nn.Linear):
+            init_linear(child)
 
 
 def batchify(d, batch_size):

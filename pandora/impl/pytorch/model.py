@@ -193,6 +193,8 @@ class PyTorchModel(nn.Module, BaseModel):
             nn.Dropout(self.dropout_level),
             nn.LogSoftmax())
 
+        utils.init_sequential_linear(self.pos_decoder)
+
     def _build_morph_decoder(self):
         if self.include_morph == 'label':
             self.morph_decoder = nn.Sequential(
@@ -223,6 +225,8 @@ class PyTorchModel(nn.Module, BaseModel):
                 nn.Linear(self.nb_dense_dims, self.nb_morph_cats),
                 nn.Dropout(self.dropout_level),
                 nn.Tanh())
+
+        utils.init_sequential_linear(self.morph_decoder)
 
     def move_to_gpu(self, gpu=True):
         self.gpu = gpu
