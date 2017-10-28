@@ -104,7 +104,7 @@ class PyTorchModel(nn.Module, BaseModel):
             self._build_morph_decoder()
             self._build_morph_loss()
 
-        self.optimizer = Optimizer(self.parameters(), 'Adam', lr=0.01)
+        self.optimizer = Optimizer(self.parameters(), 'Adagrad', lr=0.001)
 
     def _build_lemma_loss(self):
         if self.include_lemma == 'generate':
@@ -177,8 +177,13 @@ class PyTorchModel(nn.Module, BaseModel):
                 hidden_size=self.nb_dense_dims,
                 char_embed_dim=self.char_embed_dim,
                 include_context=self.include_context)
+
             # tie embeddings
-            self.lemma_decoder.embeddings.weight = self.token_embeddings.weight
+            lemma_emb_size = self.lemma_decoder.embeddings.weight.size()
+            token_emb_size = self.token_embeddings.weight.size()
+            if lemma_emb_size == token_emb_size:
+                self.lemma_decoder.embeddings.weight = \
+                    self.token_embeddings.weight
 
         elif self.include_lemma == 'label':
             if self.include_context:

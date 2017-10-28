@@ -54,9 +54,11 @@ class RNNEncoder(nn.Module):
         # token_out (seq_len x batch x hidden_size * 2)
         seq_len, batch, _ = token_out.size()
         token_out = token_out.view(seq_len, -1, 2, self.hidden_size)
-        # resp. (batch x 1 x hidden_size)
+        # (seq_len x batch x 1 x hidden_size)
         left, right = torch.chunk(token_out, chunks=2, dim=2)
-        token_out = (left + right).squeeze(1)
+        # (seq_len x btach x hidden_size)
+        token_out = (left + right).squeeze(2)
+
         return token_out
 
 
@@ -155,7 +157,7 @@ def get_conv_output_length(inp_len, kernel_size,
 class ConvEncoder(nn.Module):
     """CNN Encoder of the focus token at the character level"""
     def __init__(self, in_channels, out_channels, kernel_size, output_size,
-                 token_len, dropout=0.0, pooling='rnn'):
+                 token_len, dropout=0.0, pooling='flatten'):
         self.dropout = dropout
         self.pooling = pooling
         self.out_channels = out_channels
