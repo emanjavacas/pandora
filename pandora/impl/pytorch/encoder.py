@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+from pandora.impl.pytorch import utils
+
 
 class RNNEncoder(nn.Module):
     """RNN Character level encoder of the focus token"""
@@ -19,6 +21,12 @@ class RNNEncoder(nn.Module):
                            num_layers=num_layers,
                            bidirectional=True,
                            dropout=self.dropout)
+
+        self.init()
+
+    def init(self):
+        # rnn
+        utils.init_rnn(self.rnn)
 
     def init_hidden(self, token_in, batch_dim=1):
         batch = token_in.size(batch_dim)
@@ -73,6 +81,18 @@ class ConvEncoder(nn.Module):
                 out_channels, out_channels / 2, bidirectional=True)
 
         self.focus_dense = nn.Linear(out_channels, output_size)
+
+        self.init()
+
+    def init(self):
+        # conv
+        utils.init_conv(self.focus_conv)
+        if self.pooling:
+            # rnn
+            utils.init_rnn(self.pooling_layer)
+
+        # linear
+        utils.init_linear(self.focus_dense)
 
     def pool(self, token_out):
         """

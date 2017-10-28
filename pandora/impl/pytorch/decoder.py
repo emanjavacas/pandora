@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 
 from pandora.utils import BOS, EOS, PAD
+from pandora.impl.pytorch import utils
 
 
 class LinearDecoder(nn.Module):
@@ -27,6 +28,12 @@ class LinearDecoder(nn.Module):
         super(LinearDecoder, self).__init__()
 
         self.decoder = nn.Linear(input_size, self.output_size)
+
+        self.init()
+
+    def init(self):
+        # linear
+        utils.init_linear(self.decoder)
 
     def forward(self, token_out, context_out, *args):
         if self.include_context:
@@ -53,6 +60,12 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.linear_in = nn.Linear(hidden_size, hidden_size)
         self.linear_out = nn.Linear(hidden_size * 2, hidden_size)
+
+        self.init()
+
+    def init(self):
+        utils.linear(self.linear_in)
+        utils.linear(self.linear_out)
 
     def forward(self, dec_out, enc_outs):
         """
@@ -117,6 +130,16 @@ class AttentionalDecoder(nn.Module):
         self.proj = nn.Linear(
             self.hidden_size + self.char_embed_dim,  # include previous emb
             self.char_vocab)
+
+        self.init()
+
+    def init(self):
+        # embeddings
+        utils.init_embeddings(self.embeddings)
+        # linear
+        utils.init_linear(self.proj)
+        # rnn
+        utils.init_rnn(self.rnn)
 
     def init_hidden(self, inp, batch_dim=0):
         size = (inp.size(batch_dim), self.hidden_size)

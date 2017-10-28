@@ -16,6 +16,7 @@ from pandora.impl.base_model import BaseModel
 from pandora.impl.pytorch.encoder import RNNEncoder, ConvEncoder
 from pandora.impl.pytorch.decoder import AttentionalDecoder, LinearDecoder
 from pandora.impl.pytorch.utils import Optimizer, BatchIterator, Progbar
+from pandora.impl.pytorch import utils
 from pandora.utils import PAD
 
 
@@ -124,6 +125,9 @@ class PyTorchModel(nn.Module, BaseModel):
             len(self.token_char_vector_dict),
             self.char_embed_dim)
 
+        # init embeddings
+        utils.init_embeddings(self.token_embeddings)
+
         # encoder
         if self.focus_repr == 'recurrent':
             self.token_encoder = RNNEncoder(
@@ -144,9 +148,11 @@ class PyTorchModel(nn.Module, BaseModel):
     def _build_context_subnet(self):
         self.context_embeddings = nn.Embedding(
             self.nb_train_tokens, self.nb_embedding_dims)
+
         # !diff: seq_len doesn't require dense weights
         self.context_encoder = nn.Linear(
             self.nb_embedding_dims, self.nb_dense_dims)
+        utils.init_linear(self.context_encoder)
 
     def _build_lemma_decoder(self):
         if self.include_lemma == 'generate':
