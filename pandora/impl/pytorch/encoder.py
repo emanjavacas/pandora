@@ -11,15 +11,24 @@ from pandora.impl.pytorch import utils
 
 class RNNEncoder(nn.Module):
     """RNN Character level encoder of the focus token"""
-    def __init__(self, num_layers, input_size, hidden_size, dropout=0.0):
+    def __init__(self, num_layers, input_size, hidden_size, dropout=0.0,
+                 merge_mode='concat'):
         self.num_layers = num_layers
         self.input_shape = input_size
         self.hidden_size = hidden_size
         self.dropout = dropout
+        self.merge_mode = merge_mode
         super(RNNEncoder, self).__init__()
 
+        self.rnn_hidden_size = self.hidden_size
+        if self.merge_mode == 'concat':
+            hidden_size, rest = divmod(self.hidden_size, 2)
+            if rest > 0:
+                raise ValueError("'concat' merge_mode needs even hidden_size")
+            self.rnn_hidden_size = hidden_size
+
         self.rnn = nn.LSTM(input_size=input_size,
-                           hidden_size=hidden_size,
+                           hidden_size=self.rnn_hidden_size,
                            num_layers=num_layers,
                            bidirectional=True,
                            dropout=self.dropout)
@@ -32,7 +41,7 @@ class RNNEncoder(nn.Module):
 
     def init_hidden(self, token_in, batch_dim=1):
         batch = token_in.size(batch_dim)
-        size = (2 * self.num_layers, batch, self.hidden_size)
+        size = (2 * self.num_layers, batch, self.rnn_hidden_size)
         h_0 = Variable(token_in.data.new(*size).zero_(), requires_grad=False)
         c_0 = Variable(token_in.data.new(*size).zero_(), requires_grad=False)
         return h_0, c_0
@@ -51,13 +60,16 @@ class RNNEncoder(nn.Module):
         """
         token_out, _ = self.rnn(
             token_embed, self.init_hidden(token_embed))
-        # token_out (seq_len x batch x hidden_size * 2)
-        seq_len, batch, _ = token_out.size()
-        token_out = token_out.view(seq_len, -1, 2, self.hidden_size)
-        # (seq_len x batch x 1 x hidden_size)
-        left, right = torch.chunk(token_out, chunks=2, dim=2)
-        # (seq_len x btach x hidden_size)
-        token_out = (left + right).squeeze(2)
+
+        if self.merge_mode == 'sum':
+            # (seq_len x batch x hidden_size * 2)
+            seq_len, batch, _ = token_out.size()
+            # expose bidirectional hidden (seq_len x batch x 2 x hidden)
+            token_out = token_out.view(seq_len, -1, 2, self.rnn_hidden_size)
+            # (seq_len x batch x 1 x hidden_size)
+            left, right = torch.chunk(token_out, chunks=2, dim=2)
+            # (seq_len x batch x hidden_size)
+            token_out = (left + right).squeeze(2)
 
         return token_out
 

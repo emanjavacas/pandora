@@ -104,7 +104,7 @@ class PyTorchModel(nn.Module, BaseModel):
             self._build_morph_decoder()
             self._build_morph_loss()
 
-        self.optimizer = Optimizer(self.parameters(), 'Adagrad', lr=0.001)
+        self.optimizer = Optimizer(self.parameters(), 'Adam', lr=0.001)
 
     def _build_lemma_loss(self):
         if self.include_lemma == 'generate':
@@ -140,7 +140,8 @@ class PyTorchModel(nn.Module, BaseModel):
                 num_layers=self.nb_encoding_layers,
                 input_size=self.char_embed_dim,
                 hidden_size=self.nb_dense_dims,
-                dropout=self.dropout_level)
+                dropout=self.dropout_level,
+                merge_mode='concat')
 
         elif self.focus_repr == 'convolutions':
             self.token_encoder = ConvEncoder(

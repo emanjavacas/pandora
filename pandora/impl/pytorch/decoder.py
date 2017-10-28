@@ -133,6 +133,7 @@ class AttentionalDecoder(nn.Module):
         super(AttentionalDecoder, self).__init__()
 
         self.embeddings = nn.Embedding(self.char_vocab, self.char_embed_dim)
+
         self.rnn = nn.LSTMCell(self.char_embed_dim, self.hidden_size)
         self.attn = Attention(self.hidden_size)
         self.proj = nn.Linear(
@@ -160,7 +161,7 @@ class AttentionalDecoder(nn.Module):
         hidden, hyp = self.init_hidden(context_out), []
 
         # remove eos from target data
-        lemma_out = lemma_out.masked_fill_(lemma_out.eq(pad), eos)[:, :-1]
+        lemma_out = lemma_out.masked_fill_(lemma_out.eq(eos), pad)[:, :-1]
         # (seq_len x batch)
         lemma_out = lemma_out.t()
 
