@@ -54,24 +54,27 @@ class RNNEncoder(nn.Module):
 
         Returns:
         =========
-        token_out: (seq_len x batch x hidden_size)
-            Output sequence of rnn summed over directions
-            for attentional decoding.
+        token_out : (batch x hidden_size), summary vector for each batch,
+            consisting of the last hidden activation of the rnn
+        token_context: (seq_len x batch x hidden_size), output of the rnn
+            over the entire sequence
         """
-        token_out, _ = self.rnn(
+        output, _ = self.rnn(
             token_embed, self.init_hidden(token_embed))
 
         if self.merge_mode == 'sum':
             # (seq_len x batch x hidden_size * 2)
-            seq_len, batch, _ = token_out.size()
+            seq_len, batch, _ = output.size()
             # expose bidirectional hidden (seq_len x batch x 2 x hidden)
-            token_out = token_out.view(seq_len, -1, 2, self.rnn_hidden_size)
+            output = output.view(seq_len, -1, 2, self.rnn_hidden_size)
             # (seq_len x batch x 1 x hidden_size)
-            left, right = torch.chunk(token_out, chunks=2, dim=2)
+            left, right = torch.chunk(output, chunks=2, dim=2)
             # (seq_len x batch x hidden_size)
-            token_out = (left + right).squeeze(2)
+            output = (left + right).squeeze(2)
 
-        return token_out
+        token_out, token_context = output[-1], output
+
+        return token_out, token_context
 
 
 class BottleEncoder(nn.Module):
@@ -203,16 +206,17 @@ class ConvEncoder(nn.Module):
         Returns
         ========
         token_out : (batch x output_size)
+        token_context : (conv_seq_len x batch x channel_out)
         """
         # (batch x emb_dim x seq_len)
         token_embed = token_embed.transpose(0, 1).transpose(1, 2)
         # (batch x channel_out x conv_seq_len)
-        token_out = self.focus_conv(token_embed)
-        token_out = F.relu(token_out)
+        token_context = self.focus_conv(token_embed)
+        token_context = F.relu(token_context)
         # (batch x output_size)
-        token_out = self.focus_dense(token_out)
+        token_out = self.focus_dense(token_context)
         token_out = F.dropout(
             token_out, p=self.dropout, training=self.training)
         token_out = F.relu(token_out)
 
-        return token_out
+        return token_out, token_context.transpose(0, 1).transpose(0, 2)

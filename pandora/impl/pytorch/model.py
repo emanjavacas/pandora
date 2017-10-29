@@ -144,6 +144,13 @@ class PyTorchModel(nn.Module, BaseModel):
                 merge_mode='concat')
 
         elif self.focus_repr == 'convolutions':
+
+            if self.include_lemma and self.include_lemma == 'generate':
+                if self.nb_filters != self.nb_dense_dims:
+                    raise ValueError(
+                        "Using convolutional encoding with generated lemmas "
+                        "needs same number of filters and dense dimensions")
+
             self.token_encoder = ConvEncoder(
                 in_channels=self.char_embed_dim,
                 out_channels=self.nb_filters,
@@ -170,9 +177,6 @@ class PyTorchModel(nn.Module, BaseModel):
 
     def _build_lemma_decoder(self):
         if self.include_lemma == 'generate':
-            if self.focus_repr != 'recurrent':
-                raise ValueError(
-                    'lemma generator requires `recurrent` focus_repr')
             self.lemma_decoder = AttentionalDecoder(
                 char_dict=self.lemma_char_vector_dict,
                 hidden_size=self.nb_dense_dims,
@@ -193,6 +197,10 @@ class PyTorchModel(nn.Module, BaseModel):
                 in_dim = self.nb_dense_dims
             self.lemma_decoder = LinearDecoder(
                 in_dim, self.nb_lemmas, include_context=self.include_context)
+
+        else:
+            raise ValueError(
+                "include_lemma must be either `generate` or `label`")
 
     def _build_pos_decoder(self):
         self.pos_decoder = nn.Sequential(
@@ -261,14 +269,9 @@ class PyTorchModel(nn.Module, BaseModel):
             # (batch x token_len x emb_dim)
             token_out = self.token_embeddings(train_in['focus_in'])
             token_out = token_out.transpose(0, 1)
-            token_out = self.token_encoder(token_out)
-            if self.focus_repr == 'recurrent':
-                # if 'recurrent':
-                #     token_out (seq_len x batch x nb_dense_dims)
-                # if 'convolutions':
-                #     token_out (batch x nb_dense_dims)
-                token_context = token_out  # save encoder output for attn
-                token_out = token_out[-1]
+            # (batch x hidden), (seq_len x batch x hidden) where seq_len
+            # is either the rnn seq_len, or the convolutional seq_len
+            token_out, token_context = self.token_encoder(token_out)
             joined.append(token_out)
 
         if self.include_context:
@@ -290,6 +293,7 @@ class PyTorchModel(nn.Module, BaseModel):
 
         out = []
         if self.include_lemma:
+            # maybe get lemma_out, (if training)
             lemma_out = (train_out or {}).get('lemma_out', None)
             out.append(self.lemma_decoder(
                 token_out, context_out, token_context, lemma_out))
