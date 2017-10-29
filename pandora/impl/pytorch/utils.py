@@ -49,6 +49,54 @@ def init_sequential_linear(sequential):
             init_linear(child)
 
 
+def multiple_index_select(t, index):
+    """
+    Permute columns of a given tensor for each row independently of the others
+    :param t: tensor with at least 2 dimensions
+    :param index: 2D LongTensor with size corresponding to the first two dims
+
+    >>> a, b, c = list(range(0, 2)), list(range(2, 4)), list(range(4, 6))
+    >>> t = torch.LongTensor([[a, b, c], [c, b, c]])
+    >>> index = torch.LongTensor([[1, 2, 0], [0, 1, 1]])
+    >>> multiple_index_select(t, index).tolist()
+    [[[2, 3], [4, 5], [0, 1]], [[4, 5], [2, 3], [2, 3]]]
+    """
+    # check dimensions
+    for dim, (tdim, indexdim) in enumerate(zip(t.size(), index.size())):
+        if tdim != indexdim:
+            raise ValueError(f"Mismatch {dim}, {tdim} != {indexdim}")
+    offset = (torch.arange(0, index.size(0)) * index.size(1)).long()
+    if t.is_cuda:
+        offset = offset.cuda()
+    size = [-1] + list(t.size()[2:])
+    return t.view(*size)[(index + offset[:, None]).view(-1)].view(*t.size())
+
+
+def broadcast(t, outsize, dim):
+    """
+    General function that broadcasts a tensor (copying the data) along
+    a given dimension `dim` to a desired size `outsize`, if the current
+    size of that dimension is a divisor of the desired size `outsize`.
+
+    >>> x = broadcast(torch.randn(5, 2, 6), 6, 1)
+    >>> y = broadcast(torch.randn(5, 6, 6), 6, 1)
+    >>> x.size(1)
+    6
+    >>> y.size(1)
+    6
+    """
+    tsize = t.size(dim)
+    # do we need to broadcast?
+    if tsize != outsize:
+        div, mod = divmod(outsize, tsize)
+        if mod != 0:
+            raise ValueError(
+                "Cannot broadcast {} -> {}".format(outsize, tsize))
+        size = [1 if d != dim else div for d in range(len(t.size()))]
+        return t.repeat(*size)
+    return t
+
+
 def batchify(d, batch_size):
     batched = {k: torch.split(d[k], batch_size, 0) for k in d}
     for splits in zip(*batched.values()):

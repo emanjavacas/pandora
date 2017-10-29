@@ -6,6 +6,7 @@ from torch.autograd import Variable
 
 from pandora.utils import BOS, EOS, PAD
 from pandora.impl.pytorch import utils
+from pandora.impl.pytorch.beam import Beam
 
 
 class LinearDecoder(nn.Module):
@@ -251,3 +252,54 @@ class AttentionalDecoder(nn.Module):
         else:
             return self.generate(
                 token_out, context_out, token_context, lemma_out, max_seq_len)
+
+    def beam(self, token_out, context_out, token_context, lemma_out, bwidth=5,
+             max_seq_len=20):
+        bos, eos, output = self.char_dict[BOS], self.char_dict[EOS], []
+        pad = self.char_dict[PAD]
+        # use last encoder state as hidden: (1 x batch x hidden)
+        hidden = token_context[-1].unsqueeze(0)
+        # append token context as extra input sequence step
+        # token_context: (inp_seq + 1 x batch x hidden)
+        token_context = torch.cat([token_context, context_out.unsqueeze(0)])
+        # prev
+        prev = token_out.data.new([bos]).expand(bwidth).long()
+        prev = Variable(prev, requires_grad=False)
+
+        # make batch first
+        batch = token_out.size(0)
+        for hidden, token_context in zip(
+                hidden.chunk(batch, 1), token_context.chunk(batch, 1)):
+            # create beam
+            beam = Beam(bwidth, prev, eos=eos)
+            # broadcast single item batch to bwidth
+            hidden = utils.broadcast(hidden, bwidth, 1)
+            token_context = utils.broadcast(token_context, bwidth, 1)
+
+            while beam.active and len(beam) < max_seq_len:
+                # (1 x bwidth x emb_dim)
+                prev_emb = self.embeddings(prev).unsqueeze(0)
+                # output: (1 x bwidth x hidden)
+                _, hidden = self.rnn(prev_emb, hidden)
+                # context: (1 x bwidth x hidden)
+                context, _ = self.attn(hidden, token_context)
+                # context: (1 x bwidth x hidden + emb_dim)
+                # -> (bwidth x hidden + emb_dim)
+                context = torch.cat([prev_emb, context], 2).squeeze(0)
+                # (bwidth x vocab)
+                log_prob = F.log_softmax(self.proj(context))
+                beam.advance(log_prob.data)
+
+                # repackage
+                hidden = utils.multiple_index_select(
+                    hidden, beam.get_source_beam().unsqueeze(0))
+
+            _, hyp = beam.decode(n=1)
+            # remove bwidth dim
+            hyp = hyp[0]
+            # pad output sequences to same output length
+            hyp = hyp + [pad] * (max_seq_len - len(hyp))
+            output.append(torch.Tensor(hyp))
+
+        return torch.stack(output).t()
+
