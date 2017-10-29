@@ -75,34 +75,49 @@ class Attention(nn.Module):
         utils.init_linear(self.linear_in)
         utils.init_linear(self.linear_out)
 
-    def forward(self, dec_out, enc_outs):
+    def forward(self, dec_outs, enc_outs):
         """
         Parameters
         ===========
-        dec_out : (batch x hidden_size)
-            Output of the rnn decoder at the current decoding step.
-        enc_outs : (seq_len x batch x hidden_size)
+        dec_outs : (out_seq_len x batch x hidden_size)
+            Output of the rnn decoder.
+        enc_outs : (inp_seq_len x batch x hidden_size)
             Output of the encoder over the entire sequence.
 
         Returns
         ========
-        context : (batch x hidden_size)
+        context : (out_seq_len x batch x hidden_size)
             Context vector combining current rnn output and the entire
             encoded sequence.
-        weights : (batch x seq_len)
+        weights : (out_seq_len x batch x inp_seq_len)
             Weights computed by the attentional module over the input seq.
         """
-        att_proj = self.linear_in(dec_out).unsqueeze(2)
-        # (seq_len x batch x hidden_size) * (batch x hidden_size x 1)
-        # -> (batch x seq_len (x 1))
-        weights = torch.bmm(enc_outs.transpose(0, 1), att_proj).squeeze(2)
-        weights = F.softmax(weights)
-        # (batch x 1 x seq_len) * (batch x seq_len x hidden_size)
-        # -> (batch x 1 x hidden_size)
-        weighted = torch.bmm(
-            weights.unsqueeze(1), enc_outs.transpose(0, 1)
-        ).squeeze(1)
-        context = F.tanh(self.linear_out(torch.cat([weighted, dec_out], 1)))
+        out_seq, batch, hidden_size = dec_outs.size()
+        # (out_seq_len x batch x hidden_size)
+        att_proj = self.linear_in(
+            dec_outs.view(out_seq * batch, -1)
+        ).view(out_seq, batch, -1)
+        # (batch x out_seq_len x hidden) * (batch x hidden x inp_seq_len)
+        # -> (batch x out_seq_len x inp_seq_len)
+        weights = torch.bmm(
+            att_proj.transpose(0, 1),
+            enc_outs.transpose(0, 1).transpose(1, 2))
+        # apply softmax
+        weights = F.softmax(
+            weights.view(batch * out_seq, -1)
+        ).view(batch, out_seq, -1)
+        # (batch x out_seq_len x inp_seq_len) * (batch x inp_seq_len x hidden)
+        # -> (batch x out_seq_len x hidden_size)
+        weighted = torch.bmm(weights, enc_outs.transpose(0, 1))
+        # (out_seq_len x batch x hidden * 2)
+        combined = torch.cat([weighted.transpose(0, 1), dec_outs], 2)
+        # (out_seq_len x batch x hidden)
+        combined = self.linear_out(
+            combined.view(out_seq * batch, -1)
+        ).view(out_seq, batch, -1)
+
+        context = F.tanh(combined)
+
         return context, weights
 
 
@@ -134,10 +149,11 @@ class AttentionalDecoder(nn.Module):
 
         self.embeddings = nn.Embedding(self.char_vocab, self.char_embed_dim)
 
-        self.rnn = nn.LSTMCell(self.char_embed_dim, self.hidden_size)
+        self.rnn = nn.GRU(self.char_embed_dim, self.hidden_size)
         self.attn = Attention(self.hidden_size)
         self.proj = nn.Linear(
-            self.hidden_size + self.char_embed_dim,  # include previous emb
+            self.hidden_size +      # recurrent hidden
+            self.char_embed_dim,    # include previous emb
             self.char_vocab)
 
         self.init()
@@ -150,44 +166,57 @@ class AttentionalDecoder(nn.Module):
         # rnn
         utils.init_rnn(self.rnn)
 
-    def init_hidden(self, inp, batch_dim=0):
-        size = (inp.size(batch_dim), self.hidden_size)
-        h_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
-        c_0 = Variable(inp.data.new(*size).zero_(), requires_grad=False)
-        return h_0, c_0
-
     def decode(self, token_out, context_out, token_context, lemma_out):
         eos, pad = self.char_dict[EOS], self.char_dict[PAD]
-        hidden, hyp = self.init_hidden(context_out), []
+        # use last encoder state as hidden, add num_layers * num_dirs singleton
+        hidden = token_context[-1].unsqueeze(0)
+        # append token context as extra input sequence step
+        # token_context: (inp_seq + 1 x batch x hidden)
+        token_context = torch.cat([token_context, context_out.unsqueeze(0)])
 
         # remove eos from target data
-        lemma_out = lemma_out.masked_fill_(lemma_out.eq(eos), pad)[:, :-1]
+        lemma_out = lemma_out.masked_fill_(lemma_out.eq(pad), eos)[:, :-1]
         # (seq_len x batch)
         lemma_out = lemma_out.t()
+        out_seq, batch = lemma_out.size()
+        # (seq_len x batch x emb_dim)
+        lemma_out = self.embeddings(lemma_out)
 
-        while len(hyp) < len(lemma_out):
-            prev = lemma_out[len(hyp)]
-            prev_emb = self.embeddings(prev)
-            hidden = self.rnn(prev_emb, hidden)
-            context, weights = self.attn(hidden[0], token_context)
-            context = torch.cat([prev_emb, context], 1)
-            log_prob = F.log_softmax(self.proj(context))
-            hyp.append(log_prob)
+        # run decoder rnn
+        dec_outs, _ = self.rnn(lemma_out, hidden)
+        # compute attention
+        context, weights = self.attn(dec_outs, token_context)
+        # (out_seq_len x batch x hidden + emb_dim)
+        output = torch.cat([lemma_out, context], 2)
+        # (out_seq_len * batch x vocab)
+        output = self.proj(output.view(out_seq * batch, -1))
+        # (out_seq_len x batch x vocab)
+        output = F.log_softmax(output).view(out_seq, batch, -1)
 
-        return torch.stack(hyp)
+        return output
 
     def generate(self, token_out, context_out, token_context, lemma_out,
                  max_seq_len=20):
         bos = self.char_dict[BOS]
-        hidden, hyp = self.init_hidden(context_out), []
-        prev_data = token_out.data.new(token_out.size(0)).long()
-        prev = Variable(prev_data.fill_(bos), requires_grad=False)
+        # use last encoder state as hidden, add num_layers * num_dirs singleton
+        hidden, hyp = token_context[-1].unsqueeze(0), []
+        batch = token_out.size(0)
+        prev_data = token_out.data.new([bos]).expand(batch).long()
+        prev = Variable(prev_data, requires_grad=False)
+        # append token context as extra input sequence step
+        # token_context: (inp_seq + 1 x batch x hidden)
+        token_context = torch.cat([token_context, context_out.unsqueeze(0)])
 
-        while len(hyp) < max_seq_len:  # TODO: better end handling
-            prev_emb = self.embeddings(prev)
-            hidden = self.rnn(prev_emb, hidden)
-            context, weights = self.attn(hidden[0], token_context)
-            context = torch.cat([prev_emb, context], 1)
+        while len(hyp) < max_seq_len:  # TODO: better finishing handling
+            # prev_emb: (1 x batch x emb_dim)
+            prev_emb = self.embeddings(prev).unsqueeze(0)
+            # output: (1 x batch x hidden)
+            output, hidden = self.rnn(prev_emb, hidden)
+            # context: (1 x batch x hidden)
+            context, weights = self.attn(hidden, token_context)
+            # context: (1 x batch x hidden + emb_dim)
+            # -> (batch x hidden + emb_dim)
+            context = torch.cat([prev_emb, context], 2).squeeze(0)
             log_prob = F.log_softmax(self.proj(context))
             prev = log_prob.max(1)[1]
             hyp.append(log_prob.data)
@@ -201,7 +230,7 @@ class AttentionalDecoder(nn.Module):
         ===========
         token_out : (batch x hidden_size)
             Last step of encoder output. Ignored by this module.
-        context_out : (batch x hidden_size)
+        context_out : (batch x nb_dense_dims)
             Output of the context encoder (sentence context information).
         token_context : (seq_len x batch x hidden_size)
             Output sequence of the encoder; target attention span.
