@@ -220,7 +220,7 @@ class AttentionalDecoder(nn.Module):
             context = torch.cat([prev_emb, context], 2).squeeze(0)
             # (batch x vocab)
             log_prob = F.log_softmax(self.proj(context))
-            prev = log_prob.max(1)[1]
+            _, prev = log_prob.max(1)
             hyp.append(log_prob.data)
 
         return torch.stack(hyp)
@@ -295,11 +295,13 @@ class AttentionalDecoder(nn.Module):
                     hidden, beam.get_source_beam().unsqueeze(0))
 
             _, hyp = beam.decode(n=1)
+
             # remove bwidth dim
             hyp = hyp[0]
             # pad output sequences to same output length
             hyp = hyp + [pad] * (max_seq_len - len(hyp))
-            output.append(torch.Tensor(hyp))
+            output.append(torch.LongTensor(hyp))
 
-        return torch.stack(output).t()
+        output = torch.stack(output).t()
 
+        return output
