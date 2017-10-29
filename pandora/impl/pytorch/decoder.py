@@ -168,7 +168,7 @@ class AttentionalDecoder(nn.Module):
 
     def decode(self, token_out, context_out, token_context, lemma_out):
         eos, pad = self.char_dict[EOS], self.char_dict[PAD]
-        # use last encoder state as hidden, add num_layers * num_dirs singleton
+        # use last encoder state as hidden: (1 x batch x hidden)
         hidden = token_context[-1].unsqueeze(0)
         # append token context as extra input sequence step
         # token_context: (inp_seq + 1 x batch x hidden)
@@ -198,7 +198,7 @@ class AttentionalDecoder(nn.Module):
     def generate(self, token_out, context_out, token_context, lemma_out,
                  max_seq_len=20):
         bos = self.char_dict[BOS]
-        # use last encoder state as hidden, add num_layers * num_dirs singleton
+        # use last encoder state as hidden: (1 x batch x hidden)
         hidden, hyp = token_context[-1].unsqueeze(0), []
         batch = token_out.size(0)
         prev_data = token_out.data.new([bos]).expand(batch).long()
@@ -217,6 +217,7 @@ class AttentionalDecoder(nn.Module):
             # context: (1 x batch x hidden + emb_dim)
             # -> (batch x hidden + emb_dim)
             context = torch.cat([prev_emb, context], 2).squeeze(0)
+            # (batch x vocab)
             log_prob = F.log_softmax(self.proj(context))
             prev = log_prob.max(1)[1]
             hyp.append(log_prob.data)
