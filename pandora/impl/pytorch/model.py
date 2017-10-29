@@ -113,9 +113,9 @@ class PyTorchModel(nn.Module, BaseModel):
             else:
                 nontrainable += param.nelement()
 
-        print(f"* Number of trainable parameters: {trainable}")
-        print(f"* Number of non trainable parameters: {nontrainable}")
-        print(f"* Total number of parameters {trainable + nontrainable}")
+        print("* Number of trainable parameters: {}".format(trainable))
+        print("* Number of non trainable parameters: {}".format(nontrainable))
+        print("* Total parameters {}".format(trainable + nontrainable))
 
     def _build_lemma_loss(self):
         if self.include_lemma == 'generate':
