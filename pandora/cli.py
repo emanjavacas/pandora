@@ -20,6 +20,8 @@ def train_func(config, train, dev=None, test=None, load=False, verbose=True, fir
     :type dev: str
     :param test: Path to directory containing train files
     :type test: str
+    :param embed: Path to directory containing files for embeddings
+    :type embed: str
     :param load: Whether to load an existing model to train on top of it (default: False)
     :type load: bool
     :param nb_epochs: Number of epoch
@@ -33,77 +35,9 @@ def train_func(config, train, dev=None, test=None, load=False, verbose=True, fir
     :type kwargs: dict
     :return:
     """
-    print('::: started :::')
-    params = pandora.utils.get_param_dict(config)
-    params['config_path'] = config
-    params.update({k: v for k, v in kwargs.items() if v is not None})
-    print("::: Loaded Config :::")
-    for k, v in params.items():
-        print("\t{} : {}".format(k, v))
+    tagger = Tagger.setup_from_disk(config, train, dev, test, verbose=True, load=load, **kwargs)
 
-    train_data = pandora.utils.load_annotated_dir(
-        train,
-        format='tab',
-        extension='.tab',
-        include_pos=params['include_pos'],
-        include_lemma=params['include_lemma'],
-        include_morph=params['include_morph'],
-        nb_instances=None
-    )
-
-    if not len(train_data.keys()) or \
-        not len(train_data[list(train_data.keys())[0]]):
-            raise ValueError('No training data loaded...')
-    
-    data_sets = dict(
-            train_data=train_data,
-    )
-
-    if dev is not None:
-        dev_data = pandora.utils.load_annotated_dir(
-            dev,
-            format='tab',
-            extension='.tab',
-            include_pos=params['include_pos'],
-            include_lemma=params['include_lemma'],
-            include_morph=params['include_morph'],
-            nb_instances=None
-        )
-        if not len(dev_data.keys()) or \
-            not len(dev_data[list(dev_data.keys())[0]]):
-                raise ValueError('No dev data loaded...')
-        data_sets["dev_data"] = dev_data
-
-    if test is not None:
-        test_data = pandora.utils.load_annotated_dir(
-            test,
-            format='tab',
-            extension='.tab',
-            include_pos=params['include_pos'],
-            include_lemma=params['include_lemma'],
-            include_morph=params['include_morph'],
-            nb_instances=None
-        )
-        if not len(test_data.keys()) or \
-            not len(test_data[list(test_data.keys())[0]]):
-                raise ValueError('No test data loaded...')
-        data_sets["test_data"] = test_data
-
-    if load:
-        print('::: loading model :::')
-        tagger = Tagger(load=True, model_dir=params['model_dir'])
-        if tagger.config_path == os.sep.join((tagger.model_dir, 'config.txt')):
-            shutil.copy(tagger.config_path, os.sep.join((tagger.model_dir, 'config_original.txt')))
-            print('Warning: current config file will be overwritten. Saving it to config_original.txt')
-        tagger.setup_to_train(build=False, **data_sets)
-        tagger.curr_nb_epochs = int(params['curr_nb_epochs'])
-        print("restart from epoch "+str(tagger.curr_nb_epochs)+"...")
-        tagger.setup = True
-    else:
-        tagger = Tagger(**params)
-        tagger.setup_to_train(**data_sets)
-
-    nb_epochs = int(params['nb_epochs'])
+    nb_epochs = tagger.nb_epochs
 
     # Set up the logger
     logger_params = dict(
@@ -131,6 +65,7 @@ def cli_train():
     parser.add_argument("--dev", help="Path to directory containing dev files")
     parser.add_argument("--test", help="Path to directory containing test files")
     parser.add_argument("--train", help="Path to directory containing train files")
+    parser.add_argument("--embed", help="Path to directory containing files for the embeddings")
     parser.add_argument("--nb_epochs", help="Number of epoch", type=int)
     parser.add_argument(
         "--load",

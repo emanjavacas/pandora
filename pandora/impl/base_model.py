@@ -69,6 +69,14 @@ class BaseModel(object):
         must be a string pointing to an existing model directory
         from which an existing model will be re-loaded.
     """
+    CONFIG_KEY = "base"
+
+    def print_summary(self):
+        """
+        Print a summary of the model layer by layer, and recount number
+        of parameters, non-trainable parameters and total number of parameters
+        """
+        raise NotImplementedError
 
     def adjust_lr(self, adjust_rate=0.5):
         """
