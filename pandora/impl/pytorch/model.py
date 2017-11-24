@@ -32,6 +32,8 @@ class PyTorchModel(nn.Module, BaseModel):
     gpu : bool
         Whether to run the model on the gpu or not.
     """
+    CONFIG_KEY = "PyTorch"
+
     def __init__(self, token_len=None, token_char_vector_dict=None,
                  lemma_len=None, lemma_char_vector_dict=None,
                  nb_encoding_layers=None, nb_dense_dims=None, nb_tags=None,
@@ -105,6 +107,23 @@ class PyTorchModel(nn.Module, BaseModel):
             self._build_morph_loss()
 
         self.optimizer = Optimizer(self.parameters(), 'Adam', lr=0.001)
+
+    def print_summary(self):
+        # print model
+        print(self)
+        print()
+
+        # print trainable parameters
+        trainable, nontrainable = 0, 0
+        for param in self.parameters():
+            if param.requires_grad:
+                trainable += param.nelement()
+            else:
+                nontrainable += param.nelement()
+
+        print("* Number of trainable parameters: {}".format(trainable))
+        print("* Number of non trainable parameters: {}".format(nontrainable))
+        print("* Total parameters {}".format(trainable + nontrainable))
 
     def _build_lemma_loss(self):
         if self.include_lemma == 'generate':
@@ -189,6 +208,8 @@ class PyTorchModel(nn.Module, BaseModel):
             if lemma_emb_size == token_emb_size:
                 self.lemma_decoder.embeddings.weight = \
                     self.token_embeddings.weight
+            else:
+                print("Lemma embedding size and token embedding size are not the same")  # Would it be an error ?
 
         elif self.include_lemma == 'label':
             if self.include_context:
