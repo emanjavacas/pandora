@@ -414,7 +414,6 @@ class Tagger():
                 print_scores=False)
 
         if self.include_pos:
-
             pred_pos = self.preprocessor.inverse_transform_pos(
                 predictions=test_preds['pos_out'])
             score_dict['test_pos'] = evaluation.single_label_accuracies(
@@ -586,6 +585,11 @@ class Tagger():
             if self.include_dev:
                 pred_lemmas = self.preprocessor.inverse_transform_lemmas(
                     predictions=dev_preds['lemma_out'])
+
+                for inp, true, pred, pred_ints in zip(
+                        self.dev_tokens, self.dev_lemmas, pred_lemmas, dev_preds['lemma_out']):
+                    print(f"{inp} -> true: {true}; pred: {pred}; ints: {''.join(str(c) for c in pred_ints)}")
+
                 score_dict['dev_lemma'] = evaluation.single_label_accuracies(
                     gold=self.dev_lemmas,
                     silver=pred_lemmas,
